@@ -1,4 +1,5 @@
 import datetime
+import math
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, QComboBox, QPushButton,
     QDateEdit, QGroupBox, QScrollArea, QMessageBox, QSizePolicy, QTextEdit, QDialog, QCalendarWidget,
@@ -14,7 +15,6 @@ from models.orderitem import OrderItem
 from models.order_sequence import get_next_order_number
 from widgets.clients_db_widget import ClientsDBWidget, ClientEditDialog
 
-# --- Dni świąteczne w Polsce 2025 + weekendy ---
 HOLIDAYS_2025 = [
     datetime.date(2025, 1, 1),
     datetime.date(2025, 1, 6),
@@ -253,7 +253,6 @@ class OrderEntryWidget(QWidget):
 
         form_area = QScrollArea(self)
         form_area.setWidgetResizable(True)
-        # Ustaw szerokość dla całego widgetu
         self.setMinimumWidth(1200)
         self.setMaximumWidth(1800)
 
@@ -443,15 +442,22 @@ class OrderEntryWidget(QWidget):
         title_layout.addWidget(btn_remove)
         prod_layout.addLayout(title_layout, 0, 0, 1, 4)
 
-        # Nowe pole: Cena za 1 tyś (na samej górze)
-        cena_label = QLabel("Cena za 1 tyś:")
+        cena_label = QLabel("Cena:")
         cena_input = QLineEdit()
-        cena_input.setPlaceholderText("Cena za 1 tyś")
+        cena_input.setPlaceholderText("Cena")
         cena_input.setMaximumWidth(200)
         cena_input.setMinimumWidth(110)
+
+        cena_typ_combo = QComboBox()
+        cena_typ_combo.addItems(["za 1 tyś", "za 1 rolkę"])
+        cena_typ_combo.setStyleSheet("QComboBox { background: #eaffea; }")
+        cena_typ_combo.setFixedWidth(110)
+        cena_typ_combo.setCurrentText("za 1 tyś")
+
         cena_row = QHBoxLayout()
         cena_row.addWidget(cena_label)
         cena_row.addWidget(cena_input)
+        cena_row.addWidget(cena_typ_combo)
         cena_row.addStretch(1)
         prod_layout.addLayout(cena_row, 1, 0, 1, 4)
 
@@ -474,20 +480,34 @@ class OrderEntryWidget(QWidget):
         size_row.addStretch(1)
         prod_layout.addLayout(size_row, 2, 0, 1, prod_layout.columnCount())
 
-        mat = QComboBox(); mat.addItems(MATERIAL_OPTIONS)
+        mat = QComboBox()
+        mat.addItems(MATERIAL_OPTIONS)
         mat.setMinimumWidth(180)
         mat.setMaximumWidth(180)
         mat.setStyleSheet(
             "QComboBox { background: #eaffea; }"
             "QComboBox QAbstractItemView { background: #eaffea; }"
         )
+        mat.setEditable(False)
+
+        def handle_material_change(idx):
+            text = mat.itemText(idx)
+            if text == "Inny (dopisz ręcznie)":
+                mat.setEditable(True)
+                mat.setCurrentText("")
+                mat.lineEdit().setPlaceholderText("Wpisz własny rodzaj materiału")
+                mat.lineEdit().setFocus()
+            else:
+                mat.setEditable(False)
+                mat.setCurrentText(text)
+        mat.currentIndexChanged.connect(handle_material_change)
 
         ilosc = QLineEdit(); ilosc.setPlaceholderText("zam. ilość")
 
         typ_ilosci = QComboBox(); typ_ilosci.addItems(["tyś.", "rolek"])
         typ_ilosci.setStyleSheet("QComboBox { background: #eaffea; }")
         typ_ilosci.setFixedWidth(80)
-        typ_ilosci.setCurrentText("rolek")  # domyślnie na "rolek"
+        typ_ilosci.setCurrentText("rolek")
 
         naw_dlug = QLineEdit(); naw_dlug.setPlaceholderText("nawój/długość")
 
@@ -495,7 +515,6 @@ class OrderEntryWidget(QWidget):
         rdzen.setStyleSheet("QComboBox { background: #eaffea; }")
         rdzen.setFixedWidth(80)
 
-        # Rodzaj materiału
         row_mat = QHBoxLayout()
         label_mat = QLabel("Rodzaj materiału:")
         row_mat.addWidget(label_mat)
@@ -503,7 +522,6 @@ class OrderEntryWidget(QWidget):
         row_mat.addStretch(1)
         prod_layout.addLayout(row_mat, 3, 0, 1, 4)
 
-        # zam. ilość i typ_ilosci
         row_ilosc = QHBoxLayout()
         label_ilosc = QLabel("zam. ilość:")
         row_ilosc.addWidget(label_ilosc)
@@ -514,7 +532,6 @@ class OrderEntryWidget(QWidget):
         row_ilosc.addStretch(1)
         prod_layout.addLayout(row_ilosc, 4, 0, 1, 4)
 
-        # nawój/długość i rdzen
         row_nawoj = QHBoxLayout()
         label_nawoj = QLabel("nawój/długość:")
         row_nawoj.addWidget(label_nawoj)
@@ -527,35 +544,45 @@ class OrderEntryWidget(QWidget):
         row_nawoj.addStretch(1)
         prod_layout.addLayout(row_nawoj, 5, 0, 1, 4)
 
-        # Zamiast Pakowanie:
-        row_zam_tys = QHBoxLayout()
-        label_zam_tys = QLabel("zam. tyś:")
-        zam_tys = QLineEdit()
-        zam_tys.setReadOnly(True)
-        zam_tys.setFixedWidth(180)
-        row_zam_tys.addWidget(label_zam_tys)
-        row_zam_tys.addWidget(zam_tys)
-        row_zam_tys.addStretch(1)
-        prod_layout.addLayout(row_zam_tys, 6, 0, 1, 4)
+        row_zam_rolki = QHBoxLayout()
+        label_zam_rolki = QLabel("zam. rolki:")
+        zam_rolki = QLineEdit()
+        zam_rolki.setReadOnly(True)
+        zam_rolki.setFixedWidth(180)
+        row_zam_rolki.addWidget(label_zam_rolki)
+        row_zam_rolki.addWidget(zam_rolki)
+        row_zam_rolki.addStretch(1)
+        prod_layout.addLayout(row_zam_rolki, 6, 0, 1, 4)
 
-        def update_zam_tys():
+        def update_zam_rolki():
             try:
                 val_ilosc = float(ilosc.text().replace(",", ".") or "0")
                 val_nawoj = float(naw_dlug.text().replace(",", ".") or "0")
-                wynik = round(val_ilosc * val_nawoj / 1000, 2) if val_ilosc and val_nawoj else 0
-                zam_tys.setText(str(wynik))
+                typ = typ_ilosci.currentText().strip()
+                if typ == "tyś.":
+                    if val_nawoj > 0 and val_ilosc > 0:
+                        dzielenie = (val_ilosc * 1000) / val_nawoj
+                        wynik = math.ceil(dzielenie)
+                        zam_rolki.setText(str(wynik))
+                    else:
+                        zam_rolki.setText("0")
+                else:  # typ == "rolek"
+                    zam_rolki.setText(ilosc.text())
             except Exception:
-                zam_tys.setText("0")
-        ilosc.textChanged.connect(update_zam_tys)
-        naw_dlug.textChanged.connect(update_zam_tys)
+                zam_rolki.setText("0")
+
+        ilosc.textChanged.connect(update_zam_rolki)
+        naw_dlug.textChanged.connect(update_zam_rolki)
+        typ_ilosci.currentIndexChanged.connect(update_zam_rolki)
 
         prod_dict = {
             "block_widget": prod_block,
-            "Cena za 1 tyś": cena_input,
+            "Cena": cena_input,
+            "CenaTyp": cena_typ_combo,
             "Szerokość": szer, "Wysokość": wys, "Rodzaj materiału": mat,
             "zam. ilość": ilosc, "Typ ilości": typ_ilosci,
             "nawój/długość": naw_dlug, "Rdzeń": rdzen,
-            "zam. tyś": zam_tys
+            "zam. rolki": zam_rolki
         }
         self.prod_fields.append(prod_dict)
         self.prod_blocks.append(prod_block)
@@ -604,6 +631,14 @@ class OrderEntryWidget(QWidget):
             self.nr_edit.setText(order.order_number)
         self.data_zamowienia_edit.setDate(QDate.fromString(order.order_date.strftime("%Y-%m-%d"), "yyyy-MM-dd"))
         self.data_dostawy_edit.setDate(QDate.fromString(order.delivery_date.strftime("%Y-%m-%d"), "yyyy-MM-dd"))
+        if hasattr(order, "payment_term") and order.payment_term:
+            idx = self.termin_platnosci_combo.findText(order.payment_term)
+            if idx != -1:
+                self.termin_platnosci_combo.setCurrentIndex(idx)
+            else:
+                self.termin_platnosci_combo.setCurrentIndex(0)
+        else:
+            self.termin_platnosci_combo.setCurrentIndex(0)
         if client:
             self.selected_client = client
             self.nr_klienta_edit.setText(str(client.client_number))
@@ -628,11 +663,22 @@ class OrderEntryWidget(QWidget):
             p = self.prod_fields[-1]
             p["Szerokość"].setText(str(item.width))
             p["Wysokość"].setText(str(item.height))
-            p["Rodzaj materiału"].setCurrentText(item.material)
+            if item.material in MATERIAL_OPTIONS:
+                p["Rodzaj materiału"].setCurrentText(item.material)
+            else:
+                idx_inny = p["Rodzaj materiału"].findText("Inny (dopisz ręcznie)")
+                if idx_inny >= 0:
+                    p["Rodzaj materiału"].setCurrentIndex(idx_inny)
+                    p["Rodzaj materiału"].setEditable(True)
+                    p["Rodzaj materiału"].setCurrentText(item.material)
             p["zam. ilość"].setText(str(item.ordered_quantity))
             p["Typ ilości"].setCurrentText(item.quantity_type)
             p["nawój/długość"].setText(item.roll_length)
             p["Rdzeń"].setCurrentText(item.core)
+            p["Cena"].setText(getattr(item, "price", "") or "")
+            if hasattr(item, "price_type"):
+                p["CenaTyp"].setCurrentText(item.price_type or "za 1 tyś")
+            # nie ustawiamy już p["zam. tyś"]
 
     def fill_from_client(self, client):
         self.selected_client = client
@@ -726,6 +772,7 @@ class OrderEntryWidget(QWidget):
             order.delivery_date = delivery_date
             order.notes = self.uwagi_textedit.toPlainText().strip()
             order.client_id = self.selected_client.id
+            order.payment_term = self.termin_platnosci_combo.currentText()
             session.query(OrderItem).filter_by(order_id=order.id).delete()
         else:
             order_number = get_next_order_number(session)
@@ -735,12 +782,18 @@ class OrderEntryWidget(QWidget):
                 order_date=order_date,
                 delivery_date=delivery_date,
                 notes=self.uwagi_textedit.toPlainText().strip(),
-                client_id=self.selected_client.id
+                client_id=self.selected_client.id,
+                payment_term=self.termin_platnosci_combo.currentText()
             )
             session.add(order)
             session.flush()
 
         for p in self.prod_fields:
+            zam_rolki_val = p["zam. rolki"].text().strip()
+            try:
+                zam_rolki = int(zam_rolki_val) if zam_rolki_val else None
+            except Exception:
+                zam_rolki = None
             item = OrderItem(
                 order_id=order.id,
                 width=p["Szerokość"].text().strip(),
@@ -750,7 +803,9 @@ class OrderEntryWidget(QWidget):
                 quantity_type=p["Typ ilości"].currentText().strip(),
                 roll_length=p["nawój/długość"].text().strip(),
                 core=p["Rdzeń"].currentText().strip(),
-                
+                price=p["Cena"].text().strip(),
+                price_type=p["CenaTyp"].currentText().strip(),
+                zam_rolki=zam_rolki  # tu już działa!
             )
             session.add(item)
         session.commit()

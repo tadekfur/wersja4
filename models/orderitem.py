@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import relationship
 from .db import Base
 
@@ -13,5 +13,8 @@ class OrderItem(Base):
     quantity_type = Column(String)
     roll_length = Column(String)
     core = Column(String)
-    packaging = Column(String)
+    price = Column(String)        # NOWE POLE
+    price_type = Column(String)   # NOWE POLE
+    zam_rolki = Column(String)      # NOWE POLE
+
     order = relationship("Order", back_populates="items")

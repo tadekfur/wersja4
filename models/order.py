@@ -10,5 +10,6 @@ class Order(Base):
     delivery_date = Column(Date)
     client_id = Column(Integer, ForeignKey("clients.id"))
     notes = Column(Text)
+    payment_term = Column(String)  # Dodane pole na termin płatności
     client = relationship("Client", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")

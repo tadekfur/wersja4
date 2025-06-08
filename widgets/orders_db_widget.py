@@ -1,11 +1,12 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QMessageBox, QSizePolicy, QDialog,
-    QAbstractItemView, QToolButton, QFrame
+    QAbstractItemView, QFrame, QScrollArea, QGroupBox, QGridLayout
 )
 from PySide6.QtGui import QFont, QColor, QDesktopServices
 from PySide6.QtCore import Qt, QSettings, QUrl
 import os
+from decimal import Decimal, InvalidOperation
 
 from models.db import Session
 from models.client import Client
@@ -93,10 +94,10 @@ class OrdersDBWidget(QWidget):
         layout.addLayout(buttons_row)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
             "Nr zamówienia", "Data zamówienia", "Data wysyłki",
-            "Klient", "Telefon", "Miasto", "Dane produkcji", "Uwagi"
+            "Klient", "Telefon", "Miasto", "Termin płatności", "Cena", "Dane produkcji", "Uwagi"
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -153,6 +154,13 @@ class OrdersDBWidget(QWidget):
                 except Exception:
                     pass
 
+    def format_currency(self, value):
+        try:
+            d = Decimal(str(value).replace(',', '.'))
+        except (InvalidOperation, TypeError):
+            return str(value)
+        return f"{d:,.2f} zł".replace(',', ' ').replace('.', ',')
+
     def refresh_orders(self):
         session = Session()
         def safe_order_number(order):
@@ -198,109 +206,85 @@ class OrdersDBWidget(QWidget):
             client_city_item.setFont(QFont("Segoe UI", 10))
             self.table.setItem(row, 5, client_city_item)
 
+            payment_term = getattr(order, "payment_term", None)
+            if not payment_term and items:
+                payment_term = getattr(items[0], "payment_term", None)
+            if not payment_term:
+                payment_term = ""
+            payment_term_item = QTableWidgetItem(payment_term)
+            payment_term_item.setFont(QFont("Segoe UI", 10))
+            self.table.setItem(row, 6, payment_term_item)
+
+            # Cena - obsługa wielu pozycji, wartości walutowe
+            if production_items:
+                price_lines = []
+                for item, _ in production_items:
+                    width = str(getattr(item, "width", "") or "")
+                    height = str(getattr(item, "height", "") or "")
+                    price = getattr(item, "price", "")
+                    price_type = getattr(item, "price_type", "")
+                    if price:
+                        prefix = f"{width}x{height}/"
+                        formatted_price = self.format_currency(price)
+                        if "rolk" in (price_type or "").lower():
+                            price_line = f"{prefix}{formatted_price} /rolkę"
+                        else:
+                            price_line = f"{prefix}{formatted_price} /tyś."
+                        price_lines.append(price_line)
+                price_display = "\n".join(price_lines)
+            else:
+                price_display = ""
+            price_item = QTableWidgetItem(price_display)
+            price_item.setFont(QFont("Segoe UI", 10))
+            price_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(row, 7, price_item)
+
+            def format_prod(item):
+                # Zamiana zam.tyś na zam. rolki
+                return (
+                    f"{item.material}, {item.width}x{item.height} mm, {item.ordered_quantity} {item.quantity_type}, "
+                    f"nawój: {item.roll_length}, rdzeń: {item.core}, "
+                    f"cena: {item.price} {item.price_type}, "
+                    f"zam. rolki: {getattr(item, 'zam_rolki', '')}"
+                )
+            prod_col = 8
             if len(production_items) == 0:
                 production_label = QLabel("Brak pozycji")
                 production_label.setFont(QFont("Segoe UI", 10))
-                self.table.setCellWidget(row, 6, production_label)
-                self.table.setRowHeight(row, 28)
-            elif len(production_items) == 1:
-                item, index = production_items[0]
-                production_label = QLabel(
-                    f"{item.material}, {item.width}x{item.height} mm, {item.ordered_quantity} {item.quantity_type}, "
-                    f"nawój: {item.roll_length}, rdzeń: {item.core}"
-                )
-                production_label.setFont(QFont("Segoe UI", 10))
-                self.table.setCellWidget(row, 6, production_label)
+                self.table.setCellWidget(row, prod_col, production_label)
                 self.table.setRowHeight(row, 28)
             else:
                 production_widget = QWidget()
                 production_layout = QVBoxLayout(production_widget)
                 production_layout.setContentsMargins(0, 0, 0, 0)
                 production_layout.setSpacing(0)
-
-                main_row = QHBoxLayout()
-                main_row.setContentsMargins(0, 0, 0, 0)
-                main_row.setSpacing(6)
-                label_intro = QLabel(
-                    f"{production_items[0][0].material}, {production_items[0][0].width}x{production_items[0][0].height} mm, "
-                    f"{production_items[0][0].ordered_quantity} {production_items[0][0].quantity_type} ..."
-                )
-                label_intro.setFont(QFont("Segoe UI", 10))
-                main_row.addWidget(label_intro)
-                main_row.addStretch(1)
-                button = QToolButton()
-                button.setText("▼")
-                button.setCheckable(True)
-                button.setFont(QFont("Segoe UI", 11, QFont.Bold))
-                button.setStyleSheet("""
-                    QToolButton {
-                        border: none;
-                        background: transparent;
-                        font-size: 16px;
-                        min-width: 26px;
-                        min-height: 18px;
-                    }
-                    QToolButton:checked { color: #197a3d; }
-                """)
-                main_row.addWidget(button)
-                production_layout.addLayout(main_row)
-
-                details_widget = QWidget()
-                details_layout = QVBoxLayout(details_widget)
-                details_layout.setContentsMargins(14, 2, 2, 2)
-                details_layout.setSpacing(2)
+                height_per_row = 20
+                total_prod_rows = 0
                 for (item, index) in production_items:
-                    full_text = (
-                        f"{index+1}. {item.material}, {item.width}x{item.height} mm, {item.ordered_quantity} {item.quantity_type}, "
-                        f"nawój: {item.roll_length}, rdzeń: {item.core}"
-                    )
-                    label = QLabel(full_text)
+                    label = QLabel(f"{index+1}. {format_prod(item)}")
                     label.setFont(QFont("Segoe UI", 10))
-                    details_layout.addWidget(label)
+                    production_layout.addWidget(label)
+                    total_prod_rows += 1
                     if index < len(production_items)-1:
                         separator = QFrame()
                         separator.setFrameShape(QFrame.HLine)
                         separator.setFrameShadow(QFrame.Sunken)
                         separator.setStyleSheet("color: #e0e0e0;")
-                        details_layout.addWidget(separator)
-
-                details_widget.setVisible(False)
-                production_layout.addWidget(details_widget)
-
-                def toggle_details(checked, details_widget_ref, button_ref, table_ref, row_ref):
-                    details_widget_ref.setVisible(checked)
-                    button_ref.setText("▲" if checked else "▼")
-                    base_height = 28
-                    if checked:
-                        label_count = len(production_items)
-                        separator_count = max(0, label_count - 1)
-                        label_height = 18
-                        separator_height = 6
-                        margin = 6
-                        total_height = base_height + label_count * label_height + separator_count * separator_height + margin
-                        table_ref.setRowHeight(row_ref, total_height)
-                    else:
-                        table_ref.setRowHeight(row_ref, base_height)
-                button.toggled.connect(lambda checked, details_widget_ref=details_widget, button_ref=button, table_ref=self.table, row_ref=row: toggle_details(checked, details_widget_ref, button_ref, table_ref, row_ref))
-
-                def mousePressEvent(event, button_ref=button):
-                    if event.button() == Qt.LeftButton and not button_ref.underMouse():
-                        button_ref.toggle()
-                production_widget.mousePressEvent = mousePressEvent
-
-                self.table.setCellWidget(row, 6, production_widget)
-                self.table.setRowHeight(row, 28)
+                        production_layout.addWidget(separator)
+                        total_prod_rows += 1
+                self.table.setCellWidget(row, prod_col, production_widget)
+                self.table.setRowHeight(row, max(28, total_prod_rows * height_per_row))
 
             notes_item = QTableWidgetItem(order.notes or "")
             notes_item.setFont(QFont("Segoe UI", 10))
-            self.table.setItem(row, 7, notes_item)
+            self.table.setItem(row, 9, notes_item)
 
             base_background = "#ffffff" if row_index % 2 == 0 else "#f2f2f2"
             for column in range(self.table.columnCount()):
                 item = self.table.item(row, column)
                 if item:
                     item.setBackground(QColor(base_background))
-            cell_widget = self.table.cellWidget(row, 6)
+            cell_widget = self.table.cellWidget(row, prod_col)
             if cell_widget:
                 cell_widget.setStyleSheet(f"background: {base_background};")
         session.close()
@@ -312,9 +296,6 @@ class OrdersDBWidget(QWidget):
         self.selected_order_id = None
         self.table.clearSelection()
         self.highlight_selected_row()
-
-    def highlight_selected_row(self):
-        pass
 
     def handle_selection(self):
         selected = self.table.selectedItems()
@@ -348,6 +329,9 @@ class OrdersDBWidget(QWidget):
             self.button_print.setEnabled(False)
         self.highlight_selected_row()
 
+    def highlight_selected_row(self):
+        pass
+
     def get_selected_order(self):
         if not self.selected_order_id:
             return None
@@ -375,25 +359,30 @@ class OrdersDBWidget(QWidget):
         edit_dialog.exec()
 
     def _get_edit_dialog_class(self):
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QScrollArea
         class EditOrderDialog(QDialog):
             def __init__(self, order_entry_factory, order, after_save_callback, button_styles):
                 super().__init__()
                 self.setWindowTitle("WPROWADŹ DANE ZAMÓWIENIA")
-                self.setMinimumSize(1100, 800)
-                self.setMaximumSize(1600, 1200)
-                self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.setAttribute(Qt.WA_DeleteOnClose)
                 layout = QVBoxLayout(self)
-                self.setLayout(layout)
+                layout.setContentsMargins(12, 12, 12, 12)
+                layout.setSpacing(10)
+
                 scroll = QScrollArea()
                 scroll.setWidgetResizable(True)
-                self.order_widget = order_entry_factory(edit_order=order, after_save_callback=self.accept)
+                scroll.setMinimumWidth(900)
+                self.order_widget = order_entry_factory(edit_order=order, after_save_callback=after_save_callback)
+                self.order_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 scroll.setWidget(self.order_widget)
-                layout.addWidget(scroll)
+                layout.addWidget(scroll, stretch=1)
+
                 button_row = QHBoxLayout()
+                button_row.setSpacing(20)
                 button_row.addStretch(1)
+
+                # Szukamy przycisku zapisz, lub tworzymy nowy jeśli nie ma
                 if hasattr(self.order_widget, "form_layout"):
+                    found = False
                     for i in reversed(range(self.order_widget.form_layout.count())):
                         item = self.order_widget.form_layout.itemAt(i)
                         widget = item.widget()
@@ -402,31 +391,43 @@ class OrdersDBWidget(QWidget):
                             self.save_button.setParent(None)
                             self.save_button.setStyleSheet(button_styles["green"])
                             self.save_button.setMinimumWidth(160)
+                            self.save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                             button_row.addWidget(self.save_button)
                             self.save_button.clicked.disconnect()
                             self.save_button.clicked.connect(self.save_and_close)
+                            found = True
                             break
-                    else:
+                    if not found:
                         self.save_button = QPushButton("💾 Zapisz zamówienie")
                         self.save_button.setStyleSheet(button_styles["green"])
                         self.save_button.setMinimumWidth(160)
+                        self.save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                         button_row.addWidget(self.save_button)
                         self.save_button.clicked.connect(self.save_and_close)
                 else:
                     self.save_button = QPushButton("💾 Zapisz zamówienie")
                     self.save_button.setStyleSheet(button_styles["green"])
                     self.save_button.setMinimumWidth(160)
+                    self.save_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                     button_row.addWidget(self.save_button)
                     self.save_button.clicked.connect(self.save_and_close)
+
                 self.cancel_button = QPushButton("Anuluj")
                 self.cancel_button.setStyleSheet(button_styles["red"])
                 self.cancel_button.setMinimumWidth(120)
+                self.cancel_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 button_row.addWidget(self.cancel_button)
                 self.cancel_button.clicked.connect(self.reject)
                 layout.addLayout(button_row)
+
+                self.setMinimumWidth(1200)
+                self.resize(1300, 700)
+
             def save_and_close(self):
                 if hasattr(self.order_widget, "save_order"):
                     self.order_widget.save_order()
+                if hasattr(self.order_widget, "after_save_callback") and callable(self.order_widget.after_save_callback):
+                    self.order_widget.after_save_callback()
                 self.accept()
         return EditOrderDialog
 
@@ -469,7 +470,6 @@ class OrdersDBWidget(QWidget):
             self.refresh_dashboard_callback()
 
     def show_order_dialog_v4(self, order):
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QGroupBox, QGridLayout, QLabel, QHBoxLayout
         session = Session()
         client = session.query(Client).filter_by(id=order.client_id).first()
         items = session.query(OrderItem).filter_by(order_id=order.id).all()
@@ -505,10 +505,12 @@ class OrdersDBWidget(QWidget):
         for index, item in enumerate(items):
             if not item.width or str(item.width).strip() == "":
                 continue
+            # Zamiana zam.tyś na zam. rolki
             label = QLabel(
                 f"{index+1}. Szer: {item.width} mm, Wys: {item.height} mm, "
                 f"Materiał: {item.material}, Ilość: {item.ordered_quantity} {item.quantity_type}, "
-                f"Nawój: {item.roll_length}, Rdzeń: {item.core}"
+                f"Nawój: {item.roll_length}, Rdzeń: {item.core}, "
+                f"Cena: {item.price} {item.price_type}, Zam. rolki: {getattr(item, 'zam_rolki', '')}"
             )
             label.setFont(QFont("Segoe UI", 11))
             production_layout.addWidget(label)

@@ -13,9 +13,13 @@ def get_weekly_production_summary(start_date=None, end_date=None):
 
     summary = defaultdict(float)
     for order, item in query.all():
+        # UWAGA: Tylko pozycje z wypełnioną szerokością!
+        width = item.width
+        if width is None or str(width).strip() == "":
+            continue   # pomiń pozycje bez szerokości
+
         week = order.delivery_date.isocalendar()[1]
         material = item.material
-        width = item.width
         height = item.height
 
         qty = 0.0
@@ -38,5 +42,12 @@ def get_weekly_production_summary(start_date=None, end_date=None):
         summary[key] += qty
 
     session.close()
-    result = sorted(summary.items(), key=lambda x: (x[0][0], x[0][1], float(x[0][2]), float(x[0][3])))
+
+    def safe_float(val):
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return 0.0
+
+    result = sorted(summary.items(), key=lambda x: (x[0][0], x[0][1], safe_float(x[0][2]), safe_float(x[0][3])))
     return result

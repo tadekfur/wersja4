@@ -44,8 +44,15 @@ class DashboardWidget(QWidget):
         self.day_boxes = []
         self.cards_per_day = {}
         self.populate_days()
-        self.refresh_cards()
         self.show_done_checkbox.stateChanged.connect(self.refresh_cards)
+        # Odświeżamy tablicę zawsze po powrocie okna na wierzch (np. po dodaniu/klonowaniu)
+        self.installEventFilter(self)
+        self.refresh_cards()
+
+    def eventFilter(self, obj, event):
+        if obj == self and event.type() == 24:  # QEvent.WindowActivate
+            QTimer.singleShot(100, self.refresh_cards)
+        return super().eventFilter(obj, event)
 
     def get_days(self):
         from datetime import datetime, timedelta
@@ -111,6 +118,8 @@ class DashboardWidget(QWidget):
                 box.clear_orders()
 
         session = Session()
+        # WYMUSZAJ NAJŚWIEŻSZE DANE Z BAZY
+        session.expire_all()
         orders = session.query(Order).options(joinedload(Order.client)).order_by(Order.delivery_date.asc()).all()
         session.close()
 
@@ -132,7 +141,6 @@ class DashboardWidget(QWidget):
                 self.cards_per_day[day_str].add_order(card)
                 # Podłączanie sygnałów
                 if hasattr(card, "arrow_btn"):
-                    # POPRAWKA TU! - używamy toggle_details zamiast toggle_details_dialog
                     card.arrow_btn.clicked.connect(card.toggle_details)
                 card.mouseDoubleClickEvent = lambda event, o=order: self.open_edit_order(o)
                 card.setAcceptDrops(False)
@@ -146,6 +154,9 @@ class DashboardWidget(QWidget):
     def open_edit_order(self, order):
         w = self.order_entry_widget_factory(edit_order=order)
         w.show()
+        # Automatycznie odśwież po zamknięciu okna edycji:
+        if hasattr(w, "finished"):
+            w.finished.connect(self.refresh_cards)
 
     def handle_drop(self, order_id, target_day):
         from models.db import Session

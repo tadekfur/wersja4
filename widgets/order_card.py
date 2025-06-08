@@ -1,14 +1,26 @@
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
-    QMessageBox, QSizePolicy
+    QMessageBox, QSizePolicy, QLayout
 )
 from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice, QMimeData, QPoint
 from PySide6.QtGui import QFont, QDrag
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from models.db import Session
 from models.orderitem import OrderItem
 from widgets.done_orders_store import done_orders_store
 from widgets.order_details_dialog import OrderDetailsDialog
+
+def count_workdays(start_date, end_date):
+    if start_date == end_date:
+        return 0
+    step = 1 if end_date > start_date else -1
+    count = 0
+    current = start_date
+    while current != end_date:
+        current += timedelta(days=step)
+        if current.weekday() < 5:
+            count += step
+    return count
 
 class OrderCard(QFrame):
     def __init__(self, order, dashboard, parent=None):
@@ -30,38 +42,42 @@ class OrderCard(QFrame):
                 except Exception:
                     delivery_date = None
 
-        days_left = (delivery_date - today).days if delivery_date else None
+        if delivery_date:
+            workdays_left = count_workdays(today, delivery_date)
+        else:
+            workdays_left = None
 
-        def get_gradient_for_shipping_days(days_left):
-            if days_left is None:
-                return "#e3f2fd", "#ffffff"
-            if days_left > 4:
-                return "#e0e0e0", "#ffffff"
-            elif days_left == 4:
-                return "#cccccc", "#ffffff"
-            elif days_left == 3:
-                return "#b5e7b2", "#ffffff"
-            elif days_left == 2:
-                return "#b2d7ff", "#ffffff"
-            elif days_left == 1:
-                return "#ffc966", "#ffffff"
-            elif days_left == 0:
-                return "#ffe600", "#ffffff"
-            else:
+        def get_gradient_for_shipping_days(workdays_left):
+            if workdays_left is None:
+                return "#ffffff", "#ffffff"
+            if workdays_left < 0:
                 return "#ff6666", "#ffffff"
+            elif workdays_left == 0:
+                return "#ffe600", "#ffffff"
+            elif workdays_left == 1:
+                return "#ffc966", "#ffffff"
+            elif workdays_left == 2:
+                return "#b2d7ff", "#ffffff"
+            elif workdays_left == 3:
+                return "#b5e7b2", "#ffffff"
+            elif workdays_left == 4:
+                return "#cccccc", "#ffffff"
+            else:
+                return "#ffffff", "#ffffff"
 
-        grad_start, grad_end = get_gradient_for_shipping_days(days_left)
+        grad_start, grad_end = get_gradient_for_shipping_days(workdays_left)
 
         self.setFrameShape(QFrame.Box)
         self.setLineWidth(2)
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {grad_start}, stop:1 {grad_end});
-                border: 2px solid #7eb7e6;
-                border-radius: 4px;
-                max-width: 100%;
-            }}
-        """)
+        self.setStyleSheet(
+            "QFrame {{"
+            "    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {start}, stop:1 {end});"
+            "    border: 2px solid #7eb7e6;"
+            "    border-radius: 4px;"
+            "    max-width: 100%;"
+            "}}"
+            .format(start=grad_start, end=grad_end)
+        )
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         layout = QVBoxLayout(self)
@@ -70,7 +86,10 @@ class OrderCard(QFrame):
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
-        client_name = order.client.name if hasattr(order, 'client') and order.client else "—"
+        if hasattr(order, 'client') and order.client:
+            client_name = order.client.name
+        else:
+            client_name = "—"
 
         klient_label = QLabel(client_name)
         klient_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -78,18 +97,18 @@ class OrderCard(QFrame):
         klient_label.setWordWrap(True)
         klient_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        nr_label = QLabel(f"Zamówienie: {order.order_number}")
+        nr_label = QLabel("Zamówienie: {}".format(order.order_number))
         nr_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        nr_label.setStyleSheet("""
-            QLabel {
-                background: #111;
-                color: #fff;
-                border-radius: 3px;
-                padding: 2px 12px;
-                min-width: 150px;
-                font-weight: bold;
-            }
-        """)
+        nr_label.setStyleSheet(
+            "QLabel {{"
+            "    background: #111;"
+            "    color: #fff;"
+            "    border-radius: 3px;"
+            "    padding: 2px 12px;"
+            "    min-width: 150px;"
+            "    font-weight: bold;"
+            "}}"
+        )
         nr_label.setMinimumWidth(150)
         nr_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
 
@@ -99,10 +118,9 @@ class OrderCard(QFrame):
 
         self.arrow_btn = QToolButton()
         self.arrow_btn.setArrowType(Qt.DownArrow)
-        self.arrow_btn.setStyleSheet("QToolButton { border: none; font-size:12px; }")
         self.arrow_btn.setCheckable(True)
         self.arrow_btn.setChecked(False)
-        self.arrow_btn.clicked.connect(self.toggle_details)
+        self.arrow_btn.toggled.connect(self.toggle_details)
         header_row.addWidget(self.arrow_btn)
         layout.addLayout(header_row)
 
@@ -128,23 +146,35 @@ class OrderCard(QFrame):
         self.arrow_btn.setChecked(False)
         self.details_dialog = None
 
-    def toggle_details(self):
-        if self.details_dialog and self.details_dialog.isVisible():
-            self.details_dialog.close()
-        else:
-            self.details_dialog = OrderDetailsDialog(self.order, self, close_callback=self._dialog_closed)
+    def toggle_details(self, checked):
+        if checked:
+            if self.details_dialog and self.details_dialog.isVisible():
+                self.details_dialog.raise_()
+                self.details_dialog.activateWindow()
+                return
+            self.details_dialog = OrderDetailsDialog(self.order, None)
+            self.details_dialog.finished.connect(self._dialog_closed)
             self.details_dialog.show()
             self.details_dialog.raise_()
             self.details_dialog.activateWindow()
+        else:
+            if self.details_dialog and self.details_dialog.isVisible():
+                self.details_dialog.close()
 
     def remove_from_dashboard(self):
-        reply = QMessageBox.question(
-            self,
-            "Potwierdzenie",
-            f"Czy chcesz oznaczyć to zamówienie jako zrobione i usunąć z tablicy głównej?\n\nNr: {self.order.order_number}\nKlient: {self.order.client.name if self.order.client else ''}",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
+        msgbox = QMessageBox(self)
+        msgbox.setIcon(QMessageBox.NoIcon)
+        msgbox.setWindowTitle("Potwierdzenie")
+        nr = self.order.order_number
+        msgbox.setText(f"Czy chcesz usunąć zamówienie Nr {nr} z tablicy?")
+        msgbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msgbox.setDefaultButton(QMessageBox.No)
+        msgbox.setSizeGripEnabled(False)
+        msgbox.setStyleSheet("QLabel { min-width: 320px; }")
+        msgbox.layout().setSizeConstraint(QLayout.SetFixedSize)
+        msgbox.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        ret = msgbox.exec()
+        if ret == QMessageBox.Yes:
             done_orders_store.mark_done(self.order.id)
             self.dashboard.refresh_cards()
 
@@ -152,7 +182,10 @@ class OrderCard(QFrame):
         reply = QMessageBox.question(
             self,
             "Potwierdzenie",
-            f"Czy chcesz przywrócić to zamówienie na tablicę główną?\n\nNr: {self.order.order_number}\nKlient: {self.order.client.name if self.order.client else ''}",
+            "Czy chcesz przywrócić to zamówienie na tablicę główną?\n\nNr: {}\nKlient: {}".format(
+                self.order.order_number,
+                self.order.client.name if self.order.client else ""
+            ),
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
@@ -167,12 +200,18 @@ class OrderCard(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_start_pos = event.position() if hasattr(event, 'position') else event.pos()
+            if hasattr(event, 'position'):
+                self._drag_start_pos = event.position()
+            else:
+                self._drag_start_pos = event.pos()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
-            curr_pos = event.position() if hasattr(event, 'position') else event.pos()
+            if hasattr(event, 'position'):
+                curr_pos = event.position()
+            else:
+                curr_pos = event.pos()
             if (curr_pos - self._drag_start_pos).manhattanLength() > 5:
                 drag = QDrag(self)
                 data = QByteArray()
