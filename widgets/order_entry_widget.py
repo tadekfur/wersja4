@@ -31,6 +31,7 @@ HOLIDAYS_2025 = [
     datetime.date(2025, 12, 25),
     datetime.date(2025, 12, 26),
 ]
+
 def is_polish_holiday(date_obj):
     if date_obj in HOLIDAYS_2025:
         return True
@@ -89,7 +90,7 @@ MATERIAL_OPTIONS = [
     "Termotransferowy RF20", "Folia PP", "Folia PP RF20",
     "PET Matt Silver", "Inny (dopisz ręcznie)"
 ]
-RDZEN_OPTIONS = ["25", "40", "76"]
+RDZEN_OPTIONS = ["25", "40", "76", "inny"]
 
 def get_max_content_width(options, font):
     metrics = QFontMetrics(font)
@@ -511,9 +512,25 @@ class OrderEntryWidget(QWidget):
 
         naw_dlug = QLineEdit(); naw_dlug.setPlaceholderText("nawój/długość")
 
-        rdzen = QComboBox(); rdzen.addItems(RDZEN_OPTIONS)
+        # --- zmiana tutaj: pole "Rdzeń" z opcją "inny" i polem edycyjnym ---
+        rdzen = QComboBox()
+        rdzen.addItems(RDZEN_OPTIONS)
         rdzen.setStyleSheet("QComboBox { background: #eaffea; }")
         rdzen.setFixedWidth(80)
+        rdzen.setEditable(False)
+
+        rdzen_inny_edit = QLineEdit()
+        rdzen_inny_edit.setPlaceholderText("Wpisz rdzeń")
+        rdzen_inny_edit.setVisible(False)
+        rdzen_inny_edit.setFixedWidth(80)
+
+        def handle_rdzen_change(idx):
+            if rdzen.itemText(idx) == "inny":
+                rdzen_inny_edit.setVisible(True)
+                rdzen_inny_edit.setFocus()
+            else:
+                rdzen_inny_edit.setVisible(False)
+        rdzen.currentIndexChanged.connect(handle_rdzen_change)
 
         row_mat = QHBoxLayout()
         label_mat = QLabel("Rodzaj materiału:")
@@ -541,6 +558,7 @@ class OrderEntryWidget(QWidget):
         label_rdzen = QLabel("Rdzeń:")
         row_nawoj.addWidget(label_rdzen)
         row_nawoj.addWidget(rdzen)
+        row_nawoj.addWidget(rdzen_inny_edit)
         row_nawoj.addStretch(1)
         prod_layout.addLayout(row_nawoj, 5, 0, 1, 4)
 
@@ -582,6 +600,7 @@ class OrderEntryWidget(QWidget):
             "Szerokość": szer, "Wysokość": wys, "Rodzaj materiału": mat,
             "zam. ilość": ilosc, "Typ ilości": typ_ilosci,
             "nawój/długość": naw_dlug, "Rdzeń": rdzen,
+            "Rdzeń_inny": rdzen_inny_edit,
             "zam. rolki": zam_rolki
         }
         self.prod_fields.append(prod_dict)
@@ -674,11 +693,20 @@ class OrderEntryWidget(QWidget):
             p["zam. ilość"].setText(str(item.ordered_quantity))
             p["Typ ilości"].setCurrentText(item.quantity_type)
             p["nawój/długość"].setText(item.roll_length)
-            p["Rdzeń"].setCurrentText(item.core)
+            # obsługa "Rdzeń"
+            if item.core and item.core not in RDZEN_OPTIONS:
+                idx_inny = p["Rdzeń"].findText("inny")
+                if idx_inny >= 0:
+                    p["Rdzeń"].setCurrentIndex(idx_inny)
+                    p["Rdzeń_inny"].setVisible(True)
+                    p["Rdzeń_inny"].setText(item.core)
+            else:
+                p["Rdzeń"].setCurrentText(item.core or "")
+                p["Rdzeń_inny"].setVisible(False)
+                p["Rdzeń_inny"].setText("")
             p["Cena"].setText(getattr(item, "price", "") or "")
             if hasattr(item, "price_type"):
                 p["CenaTyp"].setCurrentText(item.price_type or "za 1 tyś")
-            # nie ustawiamy już p["zam. tyś"]
 
     def fill_from_client(self, client):
         self.selected_client = client
@@ -794,6 +822,10 @@ class OrderEntryWidget(QWidget):
                 zam_rolki = int(zam_rolki_val) if zam_rolki_val else None
             except Exception:
                 zam_rolki = None
+            if p["Rdzeń"].currentText() == "inny":
+                core_value = p["Rdzeń_inny"].text().strip()
+            else:
+                core_value = p["Rdzeń"].currentText().strip()
             item = OrderItem(
                 order_id=order.id,
                 width=p["Szerokość"].text().strip(),
@@ -802,10 +834,10 @@ class OrderEntryWidget(QWidget):
                 ordered_quantity=p["zam. ilość"].text().strip(),
                 quantity_type=p["Typ ilości"].currentText().strip(),
                 roll_length=p["nawój/długość"].text().strip(),
-                core=p["Rdzeń"].currentText().strip(),
+                core=core_value,
                 price=p["Cena"].text().strip(),
                 price_type=p["CenaTyp"].currentText().strip(),
-                zam_rolki=zam_rolki  # tu już działa!
+                zam_rolki=zam_rolki
             )
             session.add(item)
         session.commit()
